@@ -1,0 +1,63 @@
+Data Science Capstone Project
+========================================================
+author: Victor van den Broek
+date: November 11, 2015
+
+```{r, echo=FALSE, results="hide", message=FALSE, warning=FALSE}
+setwd("~/R/00 Capstone Project")
+
+library(ggplot2)
+library(ggmap)
+
+final_overview <- readRDS("data/final_overview.RDS")
+vegas <- readRDS("data/vegas.RDS")
+rate_per_region <- readRDS("data/rate_per_region.RDS")
+
+both<-merge(final_overview, rate_per_region)
+both <- both[,c(1,2,3,4,8)]
+names(both) <- c("Region", "Local hotspots", "Tourist hotspots", "Ambiguous nightlife", "Regional Rate")
+
+vegasmap <- get_map(location="Las Vegas", zoom=11)
+mappoints <- ggmap(vegasmap) + geom_point(aes(x=longitude, y=latitude, color=ind_business_type), size=4, fill=NA, shape=7, data=vegas) + xlab("Longitude") + ylab("Latitude") + ggtitle("Las Vegas Hotspots") + theme(legend.title=element_blank())
+```
+
+
+Reseach question
+========================================================
+
+For the Data Science Capstone project using the Yelp! Academic datasets, I asked myself the following research question:
+
+"Is it possible to identify tourist and local nightlife hotspots in a region using the review data available?"
+
+In order to answer the research question, I will look at identifying local and tourist reviews of nightlife businesses, and determine what division between locals and tourists is to be expected. Any businesses that significantly deviate from the expected rate, will be labelled as local or tourist hotspots.
+
+The base hypothesis is that the expected rate for local reviews is equal to the regional rate for local reviews for each nightlife business.
+
+All R code used for this presentation can be found on my github account (https://github.com/victorvdb/capstone)
+
+Methodology
+========================================================
+Users are first identified as locals (>40% reviews in that region) or tourists (<15% reviews in any region). Then a "local review"-rate per region is determined for nightlife, and each business is tested whether or not they conform to that "local review"-rate. One single review is considered to be an iid Bernoulli draw with p equal to the regional rate. The base hypothesis is then that each business would conform to a binomial distribution. This hypothesis is tested for each nightlife business per region. In order to account for the fact that these were many tests, I used the following formula to test for significance:
+
+$P_{(i)} \leq \alpha/2 \times \frac{i}{m}$
+
+$\alpha$ is set to 0.05 for a 95% confidence test.
+
+Results (1) Regional rates and hotspots
+========================================================
+```{r, echo=FALSE}
+kable(both)
+```
+
+It is observed that regions have wildly differing rates of local versus tourist reviews. Interestingly, most significant hotspots can be found in Las Vegas. This is investigated further.
+
+Results (2) Plotting Las Vegas
+========================================================
+
+Further examination of the Las Vegas results clearly show tourist hotspots around the Strip and local hotspots outside the tourist centers. The research question seems to have been answered correctly and the methodology used allows for identifying both local and tourist hotspots in a reliable fashion.
+
+```{r, echo=FALSE}
+mappoints
+```
+
+

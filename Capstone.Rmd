@@ -1,0 +1,273 @@
+---
+title: "Local and tourist hotspots identification using Yelp dataset"
+author: "Victor van den Broek"
+date: "6 november 2015"
+output: pdf_document
+---
+
+
+##Introduction
+
+For the Data Science Specialization at Coursera, I will be investigating the provided [Yelp! Academic dataset](http://www.yelp.com/dataset_challenge) to see if it is possible to identify tourist and local hotspots among the reviewed nightlife businesses. While the Yelp! dataset does have an attribute showing if the ambience of a business is touristy, this attribute doesn't say anything about whether or not the people visiting the business are local or tourists. I want to help current and future business owners with an identification which parts of a city have more tourists or locals visiting than the average rate for the city. This results in the following hypothesis for each nightlife business in the dataset:
+
+$H_0: P_{region} - P_{specific business} = 0$ 
+
+$H_a: P_{region} - P_{specific business} \neq 0$
+
+If the rate of locals visiting is significantly higher than that of the city, it is considered a local hotspot. If it is significantly lower, than it is considered a tourist hotspot. Other businesses are considered to be an average mix.
+
+In order to allow for reproducability, all source code for this markdown file can be found at [my github repository](https://github.com/victorvdb/capstone.git).
+
+##Methods and Data
+
+In order to test the hypothesis, I assume that the chance with which a review comes from a local instead of a tourist as a binomial distribution. Essentially, each review is considered an iid Bernoulli trial with a review by a local labelled a success (1) and a review by a tourist is considered a failure (0). If a city has 70% local reviews on average, then the chance a nightlife business has 2 local reviews or less out of 10 would be:
+
+*Formula 1:*
+$$
+P(X \leq x) = 
+\sum_{i=0}^{x}
+\left(
+\begin{array}{c}
+  n \\ i
+\end{array}
+\right)
+p^i(1 - p)^{n-i}
+$$
+
+Given n=10, x=2, p=0.7, this calculates as:
+
+$$
+P(X \leq 2) = 
+\left(
+\begin{array}{c}
+  10 \\ 2
+\end{array}
+\right)
+0.7^2(1 - 0.7)^8 + 
+\left(
+\begin{array}{c}
+  10 \\ 1
+\end{array}
+\right)
+0.7^1(1 - 0.7)^9 + 
+\left(
+\begin{array}{c}
+  10 \\ 0
+\end{array}
+\right)
+0.7^0(1 - 0.7)^10 = 0.00159 
+$$
+In R code this would amount to:
+
+```{r}
+binom.test(x=2, n=10, p=0.7, alternative="two.sided")
+```
+
+Alternatively, if the rate is higher than the observed regional rate, a greater than or equal sign is used to test the likelyhood of observing that rate. The observed regional rate is also calculated using *binom.test* in R, with x being the observed local nightlife reviews, and n being the total nightlife reviews.
+
+The provided dataset about users does not have the city in which the user lives, while Yelp! would have this data available. In order to recreate whether or not a user is local to the region of his or her reviews, I look at all unique reviews they have done per region in the review file. I then relate this to the total number of unique reviews that user has done in the user file and determine the fraction of those reviews they have done in their 'dominant region' in the provided review files. The same methodology could be used when all data is available, but it essential in this research as not all data is available to me. After ordering the dataset on this fraction, a pseudo-cumulative chance-distribution is shown.
+
+```{r, echo=FALSE, results="hide", message=FALSE, warning=FALSE}
+setwd("~/R/00 Capstone Project")
+
+if(!file.exists("data/yelp_dataset_challenge_academic_dataset.zip")) {
+        download.file("https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/yelp_dataset_challenge_academic_dataset.zip", "data/yelp_dataset_challenge_academic_dataset.zip")
+        unzip("data/yelp_dataset_challenge_academic_dataset.zip", exdir='data')
+}
+
+
+library(jsonlite)
+library(dplyr)
+library(sqldf)
+library(ggplot2)
+library(ggmap)
+library(knitr)
+
+# reading in, credit to Raghuram on Coursera forums. 
+# https://class.coursera.org/dsscapstone-005/forum/thread?thread_id=5
+readYelp <- function(fname) {
+        if(!file.exists(paste0("data/", fname, ".rds"))) {
+                temp <- stream_in(file(paste0("data/yelp_dataset_challenge_academic_dataset/yelp_academic_dataset_", fname, ".json")))
+                saveRDS(temp, paste0("data/", fname, ".rds"))     
+        }
+}
+
+#assign region
+
+applyRegion <- function(xv, yv) {
+        regions <- vector()
+        for(i in 1:length(xv)) {
+                x <- xv[i]
+                y <- yv[i]
+                if(x > -10 & x < 0) region <- "Edinburgh"
+                if(x > 0 & x < 10) region <- "Karlsruhe"
+                if(x > -120 & x < -100 & y > 35 & y < 40) region <- "Las Vegas"
+                if(y < 35) region <- "Phoenix"
+                if(x > -90 & x < -78 & y > 30 & y < 37) region <- "Charlotte"
+                if(x > -80 & x < -60 & y > 45 & y < 50) region <- "Montreal"
+                if(x > -100 & x < -85 & y > 41.5 & y < 45) region <- "Madison"
+                if(x > -100 & x < -85 & y > 38 & y < 41.5) region <- "Urbana"      
+                if(x > -85 & x < -78 & y > 41.5 & y < 45) region <- "Waterloo"
+                if(x > -85 & x < -78 & y > 38 & y < 41.5) region <- "Pittsburgh"
+                regions[i] <- region
+        }
+        regions
+}
+
+readYelp("business")
+readYelp("review")
+readYelp("user")
+
+
+business <- readRDS("data/business.rds")
+review <- readRDS("data/review.rds")
+user <- readRDS("data/user.rds")
+
+## reduce data
+review <- review[, c(2, 4, 8)]
+user <- user[,c(3, 5)]
+business <- business[,c(1,5,6,8,10,13)] 
+
+
+user <- subset(user, review_count >= 20)
+review <- review[review$user_id %in% user$user_id, ]
+
+business$region <- applyRegion(business$longitude, business$latitude)
+
+business$ind_nightlife <- 0
+for(x in 1:dim(business)[1]) {
+        business[x,]$ind_nightlife <- sum(unlist(business[x,]$categories)=="Nightlife")
+}
+nightlife <- subset(business, ind_nightlife==1)
+
+reviewRegion <- merge(review, business)
+reviewRegion <- unique(reviewRegion[,c(1,2,9)])
+
+
+userRegion <- reviewRegion %>% group_by(user_id, region) %>% summarise(distinct_count=n())
+userRegion <- sqldf('select * from userRegion group by user_id having distinct_count = max(distinct_count)')
+user <- merge(userRegion, user)
+user$fraction <- user$distinct_count / user$review_count
+user <- user[order(user$fraction), ]
+user$index <- seq.int(nrow(user))
+
+g <- ggplot(user, aes(index, fraction))
+g + xlab("User index, ordered by fraction") + ylab("# reviews in dominant region / # total reviews") + ggtitle("Fraction of review in dominant region per user") + geom_point() + geom_hline(y=0.15, colour="red") + geom_hline(y=0.40, colour="red")
+
+```
+*Figure 1: Identifying local and tourist users*
+
+From the above plot, I identify locals as those users that have over 40% of their unique reviews in their dominant region. They are also only identified as local to that dominant region (e.g. if they have 50% reviews in Phoenix, they're local to Phoenix, but not to Las Vegas.). Users who have a fraction between 15% and 25% are removed from the dataset, as they are considered to be ambiguous.
+
+As a next step, for all remaining users and nightlife businesses, I determine a local rate per region. Then, for each nightlife business, I calculate the p-value using a binomial distribution that that local rate would come from the regional distribution.
+
+As the above are essentially thousands of tests, it is to be expected that there would be many false positives when using a 95% confindence interval. In order to adjust for that false positive rate, I use the following formula to determine if the observed p-value indicates significance. The p-values are ordered from smallest to largest in order to apply the formula below.
+
+$P_{(i)} \leq \alpha/2 \times \frac{i}{m}$
+
+Alpha is divided by 2, as the tests I will be performing are two-sided. If the observed rate is lower than the regional rate, the business is considered a tourist hotspot. If it is higher, than it is considered a local hotspot.
+
+##Results
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+user$local_region <- ifelse(user$fraction >= 0.40, user$region, '')
+user <- sqldf('select * from user where fraction <= 0.15 or fraction >= 0.40')
+
+## look at nightlife reviews
+review <- review[review$user_id %in% user$user_id, ]
+review <- merge(review, user)
+
+nightlife_reviews <- review[review$business_id %in% nightlife$business_id, c("user_id", "business_id", "local_region", "region")]
+nightlife_reviews$ind_local <- ifelse(nightlife_reviews$local_region == nightlife_reviews$region, 1, 0)
+
+
+## actual testing
+rate_per_region <- nightlife_reviews %>% group_by(region) %>% summarise(count=n(), local_reviews=sum(ind_local))
+rate_per_region$lower_rate <- 0
+rate_per_region$est_rate <- 0
+rate_per_region$upper_rate <- 0
+for(x in 1:10) {
+        t <- binom.test(x=rate_per_region[x,]$local_reviews, n=rate_per_region[x,]$count, alternative="two.sided")
+        rate_per_region[x,]$lower_rate <- t$conf.int[1]
+        rate_per_region[x,]$upper_rate <- t$conf.int[2]
+        rate_per_region[x,]$est_rate <- t$estimate[1]
+}
+
+
+rate_per_local <- nightlife_reviews %>% group_by(business_id, region) %>% summarise(bus_count=n(), bus_local_reviews=sum(ind_local), bus_rate=sum(ind_local)/n())
+rate_per_local <- merge(rate_per_region, rate_per_local, by="region")
+rate_per_local$bus_lower_rate <- 0
+rate_per_local$bus_upper_rate <- 0
+rate_per_local$bus_est_rate <- 0
+rate_per_local$p_value <- 0
+for(x in 1:dim(rate_per_local)[1]) {
+        t <- binom.test(x=rate_per_local[x,]$bus_local_reviews, n=rate_per_local[x,]$bus_count, p=rate_per_local[x,]$est_rate, alternative="two.sided")
+        rate_per_local[x,]$bus_lower_rate <- t$conf.int[1]
+        rate_per_local[x,]$bus_upper_rate <- t$conf.int[2]
+        rate_per_local[x,]$bus_est_rate <- t$estimate[1]
+        rate_per_local[x,]$p_value <- t$p.value[1]
+}
+
+rate_per_local <- rate_per_local[order(rate_per_local$region, rate_per_local$p_value), ]
+rate_per_local <- transform(rate_per_local, rank=ave(p_value, region, FUN=function(x) rank(x, ties.method="first")))
+rate_per_local <- transform(rate_per_local, no_businesses=ave(rank, region, FUN=max))
+rate_per_local$p_value_threshold <- 0.025 *rate_per_local$rank / rate_per_local$no_businesses
+rate_per_local$ind_significant <- rate_per_local$p_value < rate_per_local$p_value_threshold
+rate_per_local$ind_mixed <- !rate_per_local$ind_significant
+rate_per_local$ind_local_hotspot <- ifelse(rate_per_local$ind_significant, rate_per_local$bus_est_rate > rate_per_local$est_rate, FALSE)
+rate_per_local$ind_tourist_hotspot <- ifelse(rate_per_local$ind_significant, rate_per_local$bus_est_rate < rate_per_local$est_rate, FALSE)
+
+final_overview <- rate_per_local %>% group_by(region) %>% 
+        summarise(total_tourist_hotspots=sum(ind_tourist_hotspot),
+                  total_local_hotspots=sum(ind_local_hotspot),
+                  total_other_businesses=sum(ind_mixed))
+
+```
+
+Using the above methodology, the following rates for local reviews are observed.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+names(rate_per_region) <- c("Region", "Total reviews", "Local reviews", "Lower bound estimate", "Local rate estimate", "Upper bound estimate")
+kable(rate_per_region, digits=2, caption="Observed regional local rates")
+```
+
+It is observed that there are much different rates across regions. The 95% confidence interval is also much smaller in popular regions such as Las Vegas as compared to Karlsruhe.
+
+Using these rates as the base rate p in formula 1, and the total count and local counts for each nightlife business, I find the following tourist and local hotspots.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+names(final_overview) <- c("Region", "Number of tourist hotspots", "Number of local hotspots", "Ambiguous/Mixed businesses")
+kable(final_overview, digits=2, caption="Observed tourist and local hotspots")
+```
+
+##Discussion
+
+Especially in the Las Vegas region, a strong local and tourist effect can be observed. In total 33% of the businesses are marked as either more touristy or more local than the complete area. When looking at the other popular region, Phoenix, only 4,2% are identified as significantly different than the complete area. This suggests that in a tourist focussed city like Las Vegas, the effect investigated is much more present than in other areas.
+
+In order to verify the findings in Las Vegas, I plot the local, tourist and mixed businesses on the city map.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+vegas_nightlife <- subset(nightlife, region=="Las Vegas")
+vegas_spots <- subset(rate_per_local, region=="Las Vegas")
+vegas <- merge(vegas_nightlife, vegas_spots)
+vegas$ind_business_type <- ifelse(vegas$ind_local_hotspot, "Local Hotspot", ifelse(vegas$ind_tourist_hotspot, "Tourist Hotspot", "Mixed Business"))
+
+
+#vegasmap <- get_map(location=c(-115.5, 35.8, -114.8, 36.4))
+vegasmap <- get_map(location="Las Vegas", zoom=11)
+mappoints <- ggmap(vegasmap) + geom_point(aes(x=longitude, y=latitude, color=ind_business_type), size=4, fill=NA, shape=7, data=vegas) + xlab("Longitude") + ylab("Latitude") + ggtitle("Las Vegas Hotspots") + theme(legend.title=element_blank())
+mappoints
+
+saveRDS(final_overview, "data/final_overview.RDS")
+saveRDS(vegas, "data/vegas.RDS")
+saveRDS(rate_per_region, "data/rate_per_region.RDS")
+```
+*Figure 2: Local and tourist hotspots in Las Vegas*
+
+In the above map, the Las Vegas strip is easily identified as a tourist / mixed area, with very few local establishments in the middle of the area. In the outskirts, of the city, very few tourist hotspots are identified, and many more local establishments are found. This sanity check confirms that the used algorithm is a suitable way of identifying tourist and local hotspots.
+
+
+
+
